@@ -18,11 +18,6 @@
 - [ ] Verificare i valori esatti degli enum SF (Fase__c, Connessione_Internet__c, ecc.)
 - [ ] Definire flusso sync bidirezionale Partner B2B ↔ User
 
-### Priorità Media
-
-- [ ] Aggiornare FRONTEND.md con form Quotazione (campi SF)
-- [ ] Documentare API endpoints per Quotazioni
-
 ### Priorità Bassa
 
 - [ ] Creare seed data di esempio con struttura SF
@@ -32,6 +27,12 @@
 ## Completati
 
 ### 2026-02-05
+
+- [x] **[16:30] Documentazione Flusso Quotazione**
+  - Aggiunto BACKEND.md sezione 8.1: Quotation Management (API, DTOs, Controller, Service, Webhook)
+  - Aggiunto FRONTEND.md sezione 11.1: Quotation Components (Types, Hooks, Form, View, List)
+  - Documentato flusso SF-driven: Sito crea starter → SF completa → Sito read-only
+  - Aggiornato SECOND-BRAIN.md con decisione architetturale flusso quotazioni
 
 - [x] **Integrazione strutture dati Salesforce** da Excel
   - Aggiornato OVERVIEW.md con mapping campi Partner B2B e Quotazione

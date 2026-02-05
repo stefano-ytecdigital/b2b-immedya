@@ -2280,6 +2280,568 @@ export class CalculationEngine {
 
 ---
 
+## 8.1 Quotation Management (Flusso Preventivi SF)
+
+### Flusso Architetturale
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                 FLUSSO QUOTAZIONE (SF-DRIVEN)                   │
+└─────────────────────────────────────────────────────────────────┘
+
+Partner           Sito B2B              Backend              Salesforce
+   │                  │                    │                     │
+   │ 1. Compila form  │                    │                     │
+   │─────────────────>│ POST /quotations   │                     │
+   │                  │───────────────────>│ Crea DRAFT          │
+   │                  │<───────────────────│                     │
+   │                  │                    │                     │
+   │ 2. Invia a SF    │ POST /:id/submit   │                     │
+   │─────────────────>│───────────────────>│ Crea record SF      │
+   │                  │                    │────────────────────>│
+   │                  │                    │<── SF Quote Number ─│
+   │                  │                    │                     │
+   │                  │   [QUOTAZIONE DIVENTA READ-ONLY]         │
+   │                  │                    │                     │
+   │                  │     [SF team completa: pricing, note]    │
+   │                  │                    │                     │
+   │                  │                    │<── Webhook update ──│
+   │                  │                    │ Aggiorna locale     │
+   │                  │                    │                     │
+   │ 3. Visualizza    │ GET /:id           │                     │
+   │   (READ-ONLY)    │<───────────────────│                     │
+```
+
+> **📌 Source of Truth**: Dopo l'invio a Salesforce, SF diventa la source of truth.
+> Il sito mostra dati in cache, aggiornati via webhook. Il Partner NON può più modificare.
+
+### API Endpoints
+
+| Method | Endpoint | Descrizione | Auth | Ruolo |
+|--------|----------|-------------|------|-------|
+| POST | `/custom/quotations` | Crea quotazione starter (DRAFT) | JWT | PARTNER |
+| GET | `/custom/quotations` | Lista quotazioni utente | JWT | All |
+| GET | `/custom/quotations/:id` | Dettaglio quotazione | JWT | All |
+| PATCH | `/custom/quotations/:id` | Aggiorna bozza (solo DRAFT) | JWT | PARTNER |
+| DELETE | `/custom/quotations/:id` | Elimina bozza (solo DRAFT) | JWT | PARTNER |
+| POST | `/custom/quotations/:id/submit` | Invia a Salesforce | JWT | PARTNER |
+| POST | `/custom/webhooks/salesforce/quotation` | Webhook aggiornamenti SF | Webhook | - |
+
+### DTOs
+
+```typescript
+// quotations/dto/create-quotation.dto.ts
+
+/**
+ * DTO per creazione quotazione - Campi editabili dal Partner
+ * Questi sono gli UNICI campi che il Partner può impostare
+ */
+export class CreateQuotationDto {
+  // === INFORMAZIONI PROGETTO ===
+  @IsString()
+  @IsNotEmpty()
+  projectName: string; // Nome progetto/evento
+
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  customerBudgetCents?: number; // Budget cliente in centesimi
+
+  @IsOptional()
+  @IsString()
+  installationCity?: string; // Città installazione
+
+  @IsOptional()
+  @IsDateString()
+  requestedDeliveryDate?: string; // Data consegna richiesta
+
+  // === DETTAGLI INSTALLAZIONE (Picklist SF) ===
+  @IsOptional()
+  @IsEnum(InternetConnection)
+  internetConnection?: InternetConnection;
+
+  @IsOptional()
+  @IsEnum(ContentType)
+  contentType?: ContentType;
+
+  @IsOptional()
+  @IsEnum(ContentManagement)
+  contentManagement?: ContentManagement;
+
+  @IsOptional()
+  @IsEnum(AnchoringSystem)
+  anchoringSystem?: AnchoringSystem;
+
+  @IsOptional()
+  @IsEnum(AnchoringMaterial)
+  anchoringMaterial?: AnchoringMaterial;
+
+  // === INFO CLIENTE ===
+  @IsOptional()
+  @IsEnum(CustomerCategory)
+  customerCategory?: CustomerCategory;
+
+  @IsOptional()
+  @IsBoolean()
+  hasExistingSoftware?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  needsVideorender?: boolean;
+
+  // === NOTE ===
+  @IsOptional()
+  @IsString()
+  @MaxLength(5000)
+  productsDescription?: string; // Descrizione prodotti richiesti
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(5000)
+  commercialNotes?: string; // Note commerciali
+
+  @IsOptional()
+  @IsBoolean()
+  needsSiteSurvey?: boolean; // Richiede sopralluogo
+
+  // === CONFIGURAZIONE TECNICA (dal configuratore) ===
+  @IsInt()
+  @Min(500)
+  requestedWidthMm: number; // Larghezza richiesta mm
+
+  @IsInt()
+  @Min(500)
+  requestedHeightMm: number; // Altezza richiesta mm
+
+  @IsInt()
+  @Min(10)
+  pixelPitchTenths: number; // Pitch (es: 25 = P2.5)
+
+  @IsInt()
+  @Min(1)
+  totalModules: number; // Numero totale moduli
+
+  @IsInt()
+  @Min(1)
+  modulesX: number; // Moduli orizzontali
+
+  @IsInt()
+  @Min(1)
+  modulesY: number; // Moduli verticali
+
+  @IsInt()
+  actualWidthMm: number; // Larghezza effettiva mm
+
+  @IsInt()
+  actualHeightMm: number; // Altezza effettiva mm
+
+  @IsInt()
+  resolutionX: number; // Risoluzione orizzontale px
+
+  @IsInt()
+  resolutionY: number; // Risoluzione verticale px
+
+  @IsInt()
+  @Min(1)
+  receivingCards: number; // Numero receiving cards
+
+  @IsInt()
+  @Min(0)
+  estimatedPriceInCents: number; // Prezzo stimato (frontend)
+}
+```
+
+```typescript
+// quotations/dto/update-quotation.dto.ts
+
+/**
+ * DTO per aggiornamento quotazione - Solo se status è DRAFT
+ * Partial di CreateQuotationDto
+ */
+export class UpdateQuotationDto extends PartialType(CreateQuotationDto) {}
+```
+
+```typescript
+// quotations/dto/quotation-response.dto.ts
+
+/**
+ * DTO Response - Include tutti i campi, anche quelli READ-ONLY da SF
+ */
+export class QuotationResponseDto {
+  id: string;
+  userId: string;
+  status: QuotationStatus; // DRAFT | SUBMITTED
+
+  // === Campi editabili (da CreateQuotationDto) ===
+  projectName: string;
+  customerBudgetCents?: number;
+  installationCity?: string;
+  requestedDeliveryDate?: Date;
+  internetConnection?: InternetConnection;
+  contentType?: ContentType;
+  contentManagement?: ContentManagement;
+  anchoringSystem?: AnchoringSystem;
+  anchoringMaterial?: AnchoringMaterial;
+  customerCategory?: CustomerCategory;
+  hasExistingSoftware?: boolean;
+  needsVideorender?: boolean;
+  productsDescription?: string;
+  commercialNotes?: string;
+  needsSiteSurvey?: boolean;
+  requestedWidthMm: number;
+  requestedHeightMm: number;
+  pixelPitchTenths: number;
+  totalModules: number;
+  modulesX: number;
+  modulesY: number;
+  actualWidthMm: number;
+  actualHeightMm: number;
+  resolutionX: number;
+  resolutionY: number;
+  receivingCards: number;
+  estimatedPriceInCents: number;
+
+  // === Campi READ-ONLY (popolati da Salesforce) ===
+  salesforceQuoteId?: string;      // ID record SF (18 char)
+  salesforceQuoteNumber?: string;  // Auto-number SF (Q-XXXXX)
+  phase?: QuotationPhase;          // Fase quotazione
+  totalCostCents?: number;         // Costo totale (rollup SF)
+  ytecNotes?: string;              // Note riservate team interno
+  lastSyncAt?: Date;               // Ultimo sync con SF
+
+  // === Metadata ===
+  createdAt: Date;
+  updatedAt: Date;
+}
+```
+
+```typescript
+// quotations/dto/submit-quotation-response.dto.ts
+
+export class SubmitQuotationResponseDto {
+  success: boolean;
+  quotationId: string;
+  salesforceQuoteId: string;
+  salesforceQuoteNumber: string;
+  message: string;
+}
+```
+
+```typescript
+// quotations/dto/salesforce-quotation-webhook.dto.ts
+
+/**
+ * Payload ricevuto da Salesforce quando una quotazione viene aggiornata
+ */
+export class SalesforceQuotationWebhookDto {
+  @IsString()
+  quotationId: string; // ID SF della quotazione
+
+  @IsEnum(QuotationPhase)
+  phase: QuotationPhase; // Nuova fase
+
+  @IsOptional()
+  @IsInt()
+  totalCostCents?: number; // Costo totale aggiornato
+
+  @IsOptional()
+  @IsString()
+  ytecNotes?: string; // Note interne aggiornate
+
+  @IsOptional()
+  @IsObject()
+  metadata?: Record<string, any>; // Altri campi SF
+}
+```
+
+### Controller
+
+```typescript
+// quotations/quotations.controller.ts
+
+@ApiTags('Quotations')
+@Controller('custom/quotations')
+@UseGuards(JwtAuthGuard)
+export class QuotationsController {
+  constructor(private readonly quotationsService: QuotationsService) {}
+
+  @Post()
+  @Roles(UserRole.PARTNER)
+  @ApiOperation({ summary: 'Crea nuova quotazione (DRAFT)' })
+  @ApiResponse({ status: 201, type: QuotationResponseDto })
+  async create(
+    @CurrentUser() user: User,
+    @Body() createDto: CreateQuotationDto,
+  ): Promise<QuotationResponseDto> {
+    return this.quotationsService.create(user.id, createDto);
+  }
+
+  @Get()
+  @ApiOperation({ summary: 'Lista quotazioni utente' })
+  @ApiResponse({ status: 200, type: [QuotationResponseDto] })
+  async findAll(
+    @CurrentUser() user: User,
+    @Query() filters: QuotationFiltersDto,
+  ): Promise<QuotationResponseDto[]> {
+    return this.quotationsService.findAllByUser(user.id, filters);
+  }
+
+  @Get(':id')
+  @ApiOperation({ summary: 'Dettaglio quotazione' })
+  @ApiResponse({ status: 200, type: QuotationResponseDto })
+  async findOne(
+    @CurrentUser() user: User,
+    @Param('id') id: string,
+  ): Promise<QuotationResponseDto> {
+    return this.quotationsService.findOne(id, user.id);
+  }
+
+  @Patch(':id')
+  @Roles(UserRole.PARTNER)
+  @ApiOperation({ summary: 'Aggiorna quotazione (solo DRAFT)' })
+  @ApiResponse({ status: 200, type: QuotationResponseDto })
+  async update(
+    @CurrentUser() user: User,
+    @Param('id') id: string,
+    @Body() updateDto: UpdateQuotationDto,
+  ): Promise<QuotationResponseDto> {
+    return this.quotationsService.update(id, user.id, updateDto);
+  }
+
+  @Delete(':id')
+  @Roles(UserRole.PARTNER)
+  @ApiOperation({ summary: 'Elimina quotazione (solo DRAFT)' })
+  @HttpCode(HttpStatus.NO_CONTENT)
+  async delete(
+    @CurrentUser() user: User,
+    @Param('id') id: string,
+  ): Promise<void> {
+    return this.quotationsService.delete(id, user.id);
+  }
+
+  @Post(':id/submit')
+  @Roles(UserRole.PARTNER)
+  @ApiOperation({ summary: 'Invia quotazione a Salesforce' })
+  @ApiResponse({ status: 200, type: SubmitQuotationResponseDto })
+  async submit(
+    @CurrentUser() user: User,
+    @Param('id') id: string,
+  ): Promise<SubmitQuotationResponseDto> {
+    return this.quotationsService.submitToSalesforce(id, user.id);
+  }
+}
+```
+
+### Service
+
+```typescript
+// quotations/quotations.service.ts
+
+@Injectable()
+export class QuotationsService {
+  private readonly logger = new Logger(QuotationsService.name);
+
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly salesforceService: SalesforceService,
+  ) {}
+
+  /**
+   * Crea quotazione in stato DRAFT
+   */
+  async create(userId: string, dto: CreateQuotationDto): Promise<QuotationResponseDto> {
+    const quotation = await this.prisma.quotation.create({
+      data: {
+        userId,
+        status: QuotationStatus.DRAFT,
+        ...dto,
+        requestedDeliveryDate: dto.requestedDeliveryDate
+          ? new Date(dto.requestedDeliveryDate)
+          : null,
+      },
+    });
+
+    return this.toResponseDto(quotation);
+  }
+
+  /**
+   * Aggiorna quotazione - SOLO se in stato DRAFT
+   */
+  async update(
+    id: string,
+    userId: string,
+    dto: UpdateQuotationDto,
+  ): Promise<QuotationResponseDto> {
+    const quotation = await this.findOneOrFail(id, userId);
+
+    // Verifica che sia ancora modificabile
+    if (quotation.status !== QuotationStatus.DRAFT) {
+      throw new BadRequestException(
+        'Impossibile modificare: quotazione già inviata a Salesforce',
+      );
+    }
+
+    const updated = await this.prisma.quotation.update({
+      where: { id },
+      data: {
+        ...dto,
+        requestedDeliveryDate: dto.requestedDeliveryDate
+          ? new Date(dto.requestedDeliveryDate)
+          : undefined,
+      },
+    });
+
+    return this.toResponseDto(updated);
+  }
+
+  /**
+   * Elimina quotazione - SOLO se in stato DRAFT
+   */
+  async delete(id: string, userId: string): Promise<void> {
+    const quotation = await this.findOneOrFail(id, userId);
+
+    if (quotation.status !== QuotationStatus.DRAFT) {
+      throw new BadRequestException(
+        'Impossibile eliminare: quotazione già inviata a Salesforce',
+      );
+    }
+
+    await this.prisma.quotation.delete({ where: { id } });
+  }
+
+  /**
+   * Invia quotazione a Salesforce
+   * - Crea record in SF
+   * - Riceve Quote Number
+   * - Marca come SUBMITTED (diventa READ-ONLY)
+   */
+  async submitToSalesforce(
+    id: string,
+    userId: string,
+  ): Promise<SubmitQuotationResponseDto> {
+    const quotation = await this.findOneOrFail(id, userId);
+
+    if (quotation.status !== QuotationStatus.DRAFT) {
+      throw new BadRequestException('Quotazione già inviata');
+    }
+
+    // Recupera dati utente per SF
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+    });
+
+    // Crea record in Salesforce
+    const sfResult = await this.salesforceService.createQuotation({
+      accountId: user.salesforceAccountId,
+      ...quotation,
+    });
+
+    // Aggiorna locale con dati SF
+    const updated = await this.prisma.quotation.update({
+      where: { id },
+      data: {
+        status: QuotationStatus.SUBMITTED,
+        salesforceQuoteId: sfResult.id,
+        salesforceQuoteNumber: sfResult.quoteNumber,
+        phase: QuotationPhase.RICEVUTA,
+        lastSyncAt: new Date(),
+      },
+    });
+
+    this.logger.log(
+      `Quotazione ${id} inviata a SF: ${sfResult.quoteNumber}`,
+    );
+
+    return {
+      success: true,
+      quotationId: id,
+      salesforceQuoteId: sfResult.id,
+      salesforceQuoteNumber: sfResult.quoteNumber,
+      message: `Quotazione inviata con successo. Numero: ${sfResult.quoteNumber}`,
+    };
+  }
+
+  /**
+   * Aggiorna quotazione da webhook Salesforce
+   * Chiamato quando SF modifica fase, pricing, note
+   */
+  async updateFromSalesforce(dto: SalesforceQuotationWebhookDto): Promise<void> {
+    const quotation = await this.prisma.quotation.findFirst({
+      where: { salesforceQuoteId: dto.quotationId },
+    });
+
+    if (!quotation) {
+      this.logger.warn(`Quotazione SF non trovata: ${dto.quotationId}`);
+      return;
+    }
+
+    await this.prisma.quotation.update({
+      where: { id: quotation.id },
+      data: {
+        phase: dto.phase,
+        totalCostCents: dto.totalCostCents,
+        ytecNotes: dto.ytecNotes,
+        lastSyncAt: new Date(),
+      },
+    });
+
+    this.logger.log(
+      `Quotazione ${quotation.id} aggiornata da SF: fase ${dto.phase}`,
+    );
+  }
+
+  // ... altri metodi helper
+}
+```
+
+### Webhook Controller
+
+```typescript
+// quotations/quotations-webhook.controller.ts
+
+@Controller('custom/webhooks/salesforce')
+export class QuotationsWebhookController {
+  private readonly logger = new Logger(QuotationsWebhookController.name);
+
+  constructor(private readonly quotationsService: QuotationsService) {}
+
+  @Post('quotation')
+  @Public() // No JWT
+  @UseGuards(SalesforceWebhookGuard)
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Webhook SF per aggiornamenti quotazione' })
+  async handleQuotationUpdate(
+    @Body() payload: SalesforceQuotationWebhookDto,
+  ): Promise<{ success: boolean }> {
+    this.logger.log(`Webhook quotazione ricevuto: ${JSON.stringify(payload)}`);
+
+    try {
+      await this.quotationsService.updateFromSalesforce(payload);
+      return { success: true };
+    } catch (error) {
+      this.logger.error(`Errore webhook: ${error.message}`);
+      return { success: false };
+    }
+  }
+}
+```
+
+### Campi Quotazione - Riepilogo
+
+| Categoria | Campi | Editabili | Note |
+|-----------|-------|-----------|------|
+| **Progetto** | projectName, customerBudgetCents, installationCity, requestedDeliveryDate | ✅ Solo DRAFT | Info base progetto |
+| **Installazione** | internetConnection, contentType, contentManagement, anchoringSystem, anchoringMaterial | ✅ Solo DRAFT | Picklist SF |
+| **Cliente** | customerCategory, hasExistingSoftware, needsVideorender | ✅ Solo DRAFT | Caratteristiche cliente |
+| **Note** | productsDescription, commercialNotes, needsSiteSurvey | ✅ Solo DRAFT | Testo libero |
+| **Configurazione** | requestedWidthMm, requestedHeightMm, pixelPitchTenths, totalModules, modulesX, modulesY, actualWidthMm, actualHeightMm, resolutionX, resolutionY, receivingCards, estimatedPriceInCents | ✅ Solo DRAFT | Calcolati dal configuratore |
+| **Salesforce** | salesforceQuoteId, salesforceQuoteNumber, phase, totalCostCents, ytecNotes, lastSyncAt | ❌ READ-ONLY | Popolati da SF |
+
+> **⚠️ Importante**: Una volta chiamato `POST /:id/submit`, tutti i campi diventano READ-ONLY.
+> Il Partner può solo visualizzare la quotazione. Qualsiasi modifica deve passare da Salesforce.
+
+---
+
 ## 9. Slice: Orders
 
 ### API Endpoints

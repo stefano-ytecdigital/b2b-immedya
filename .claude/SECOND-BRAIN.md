@@ -104,6 +104,33 @@ L'algoritmo gira sul FRONTEND. Vincoli critici:
 **Webhook**: Cambio fase quotazione (Fase__c)
 **Polling**: Sync partner ogni 5 minuti
 
+### Flusso Quotazioni (DECISIONE 2026-02-05)
+
+**Modello SF-Driven**:
+```
+Partner compila form → Crea DRAFT locale → Submit → SF crea record → READ-ONLY
+```
+
+**Punti chiave decisi con l'utente**:
+1. Il sito crea SOLO la quotazione "starter" (dati progetto + config tecnica)
+2. Dopo invio a SF, la quotazione diventa **READ-ONLY** sul sito
+3. Salesforce è la **source of truth** per:
+   - Pricing finale (totalCostCents)
+   - Fase quotazione (phase)
+   - Note team (ytecNotes)
+4. Webhook SF → aggiorna dati locali (cache)
+5. Il Partner visualizza lo stato ma NON può modificare
+
+**Campi editabili** (solo in DRAFT):
+- Progetto: projectName, customerBudgetCents, installationCity, requestedDeliveryDate
+- Installazione: internetConnection, contentType, contentManagement, anchoringSystem, anchoringMaterial
+- Cliente: customerCategory, hasExistingSoftware, needsVideorender
+- Note: productsDescription, commercialNotes, needsSiteSurvey
+- Configurazione tecnica (dal wizard)
+
+**Campi READ-ONLY** (da SF):
+- salesforceQuoteId, salesforceQuoteNumber, phase, totalCostCents, ytecNotes, lastSyncAt
+
 ### Deploy Target
 
 - PM2 per backend (Bitnami)

@@ -1379,6 +1379,1160 @@ export function ConfigWizard() {
 
 ---
 
+## 11.1 Quotation Components (Flusso Preventivi)
+
+### Flusso UX
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                 FLUSSO UX QUOTAZIONE                            │
+└─────────────────────────────────────────────────────────────────┘
+
+    [Configuratore Custom]
+           │
+           ▼
+    ┌──────────────┐
+    │ QuotationForm│ ◄─── Partner compila form
+    │   (DRAFT)    │      (tutti campi editabili)
+    └──────────────┘
+           │
+           ▼ "Invia Richiesta"
+    ┌──────────────┐
+    │ConfirmDialog │ ◄─── "Confermi invio? Non potrai più modificare"
+    └──────────────┘
+           │
+           ▼ submit()
+    ┌──────────────┐
+    │ QuotationView│ ◄─── READ-ONLY con QuoteNumber SF
+    │ (SUBMITTED)  │      Partner aspetta risposta team
+    └──────────────┘
+           │
+           ▼ [Webhook SF aggiorna fase]
+    ┌──────────────┐
+    │ QuotationView│ ◄─── Mostra pricing, note team, fase
+    │ (PROCESSED)  │
+    └──────────────┘
+```
+
+> **📌 Importante**: Dopo il submit, la quotazione diventa READ-ONLY.
+> Il Partner visualizza solo, SF è la source of truth.
+
+### Types
+
+```typescript
+// features/custom-configurator/types/quotation.ts
+
+/**
+ * Status locale della quotazione
+ */
+export type QuotationStatus = 'DRAFT' | 'SUBMITTED';
+
+/**
+ * Fase quotazione (da Salesforce)
+ */
+export type QuotationPhase =
+  | 'RICEVUTA'
+  | 'IN_LAVORAZIONE'
+  | 'INVIATA_AL_CLIENTE'
+  | 'ACCETTATA'
+  | 'PERSA';
+
+/**
+ * Picklist per form quotazione
+ */
+export type InternetConnection =
+  | 'PRESENTE_CABLATA'
+  | 'PRESENTE_WIFI'
+  | 'DA_PREDISPORRE'
+  | 'NON_NECESSARIA';
+
+export type ContentType =
+  | 'VIDEO'
+  | 'IMMAGINI_STATICHE'
+  | 'MIXED'
+  | 'LIVE_STREAMING';
+
+export type ContentManagement =
+  | 'LOCALE'
+  | 'REMOTO'
+  | 'CLOUD'
+  | 'NON_DEFINITO';
+
+export type AnchoringSystem =
+  | 'GROUND_SUPPORT'
+  | 'AMERICANA'
+  | 'APPENDIMENTO'
+  | 'STRUTTURA_FISSA'
+  | 'DA_DEFINIRE';
+
+export type AnchoringMaterial =
+  | 'INCLUSO'
+  | 'FORNITO_DAL_CLIENTE'
+  | 'DA_QUOTARE_SEPARATAMENTE';
+
+export type CustomerCategory =
+  | 'RENTAL'
+  | 'CORPORATE'
+  | 'RETAIL'
+  | 'EVENTI'
+  | 'BROADCAST'
+  | 'ALTRO';
+
+/**
+ * Dati form quotazione - Campi editabili dal Partner
+ */
+export interface QuotationFormData {
+  // Info Progetto
+  projectName: string;
+  customerBudgetCents?: number;
+  installationCity?: string;
+  requestedDeliveryDate?: string;
+
+  // Dettagli Installazione
+  internetConnection?: InternetConnection;
+  contentType?: ContentType;
+  contentManagement?: ContentManagement;
+  anchoringSystem?: AnchoringSystem;
+  anchoringMaterial?: AnchoringMaterial;
+
+  // Info Cliente
+  customerCategory?: CustomerCategory;
+  hasExistingSoftware?: boolean;
+  needsVideorender?: boolean;
+
+  // Note
+  productsDescription?: string;
+  commercialNotes?: string;
+  needsSiteSurvey?: boolean;
+
+  // Configurazione Tecnica (dal configuratore, read-only nel form)
+  requestedWidthMm: number;
+  requestedHeightMm: number;
+  pixelPitchTenths: number;
+  totalModules: number;
+  modulesX: number;
+  modulesY: number;
+  actualWidthMm: number;
+  actualHeightMm: number;
+  resolutionX: number;
+  resolutionY: number;
+  receivingCards: number;
+  estimatedPriceInCents: number;
+}
+
+/**
+ * Quotazione completa (response API)
+ */
+export interface Quotation extends QuotationFormData {
+  id: string;
+  userId: string;
+  status: QuotationStatus;
+
+  // Campi READ-ONLY (da Salesforce)
+  salesforceQuoteId?: string;
+  salesforceQuoteNumber?: string;
+  phase?: QuotationPhase;
+  totalCostCents?: number;
+  ytecNotes?: string;
+  lastSyncAt?: string;
+
+  createdAt: string;
+  updatedAt: string;
+}
+
+/**
+ * Helper: verifica se quotazione è modificabile
+ */
+export function isQuotationEditable(quotation: Quotation): boolean {
+  return quotation.status === 'DRAFT';
+}
+
+/**
+ * Helper: verifica se quotazione è stata inviata
+ */
+export function isQuotationSubmitted(quotation: Quotation): boolean {
+  return quotation.status === 'SUBMITTED';
+}
+```
+
+### API Hooks - Query Keys
+
+```typescript
+// features/custom-configurator/api/quotation-keys.ts
+
+export const quotationKeys = {
+  all: ['quotations'] as const,
+  lists: () => [...quotationKeys.all, 'list'] as const,
+  list: (filters: QuotationFilters) =>
+    [...quotationKeys.lists(), filters] as const,
+  details: () => [...quotationKeys.all, 'detail'] as const,
+  detail: (id: string) => [...quotationKeys.details(), id] as const,
+};
+
+export interface QuotationFilters {
+  status?: QuotationStatus;
+  phase?: QuotationPhase;
+  search?: string;
+}
+```
+
+### API Hooks - Queries
+
+```typescript
+// features/custom-configurator/api/use-quotations.ts
+
+import { useQuery } from '@tanstack/react-query';
+import { quotationKeys, type QuotationFilters } from './quotation-keys';
+import type { Quotation } from '../types/quotation';
+
+/**
+ * Lista quotazioni utente con filtri
+ */
+export function useQuotations(filters: QuotationFilters = {}) {
+  return useQuery({
+    queryKey: quotationKeys.list(filters),
+    queryFn: async (): Promise<Quotation[]> => {
+      const params = new URLSearchParams();
+      if (filters.status) params.set('status', filters.status);
+      if (filters.phase) params.set('phase', filters.phase);
+      if (filters.search) params.set('search', filters.search);
+
+      const response = await fetch(
+        `/api/custom/quotations?${params.toString()}`,
+        { credentials: 'include' }
+      );
+
+      if (!response.ok) {
+        throw new Error('Errore caricamento quotazioni');
+      }
+
+      return response.json();
+    },
+  });
+}
+
+/**
+ * Singola quotazione per ID
+ */
+export function useQuotation(id: string) {
+  return useQuery({
+    queryKey: quotationKeys.detail(id),
+    queryFn: async (): Promise<Quotation> => {
+      const response = await fetch(`/api/custom/quotations/${id}`, {
+        credentials: 'include',
+      });
+
+      if (!response.ok) {
+        throw new Error('Quotazione non trovata');
+      }
+
+      return response.json();
+    },
+    enabled: !!id,
+  });
+}
+```
+
+### API Hooks - Mutations
+
+```typescript
+// features/custom-configurator/api/use-quotation-mutations.ts
+
+import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { quotationKeys } from './quotation-keys';
+import type { Quotation, QuotationFormData } from '../types/quotation';
+
+interface SubmitResponse {
+  success: boolean;
+  quotationId: string;
+  salesforceQuoteId: string;
+  salesforceQuoteNumber: string;
+  message: string;
+}
+
+/**
+ * Crea nuova quotazione (DRAFT)
+ */
+export function useCreateQuotation() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async (data: QuotationFormData): Promise<Quotation> => {
+      const response = await fetch('/api/custom/quotations', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify(data),
+      });
+
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.message || 'Errore creazione quotazione');
+      }
+
+      return response.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: quotationKeys.lists() });
+    },
+  });
+}
+
+/**
+ * Aggiorna quotazione esistente (solo DRAFT)
+ */
+export function useUpdateQuotation(id: string) {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async (
+      data: Partial<QuotationFormData>
+    ): Promise<Quotation> => {
+      const response = await fetch(`/api/custom/quotations/${id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify(data),
+      });
+
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(
+          error.message || 'Impossibile modificare: quotazione già inviata'
+        );
+      }
+
+      return response.json();
+    },
+    onSuccess: (data) => {
+      queryClient.setQueryData(quotationKeys.detail(id), data);
+      queryClient.invalidateQueries({ queryKey: quotationKeys.lists() });
+    },
+  });
+}
+
+/**
+ * Elimina quotazione (solo DRAFT)
+ */
+export function useDeleteQuotation() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async (id: string): Promise<void> => {
+      const response = await fetch(`/api/custom/quotations/${id}`, {
+        method: 'DELETE',
+        credentials: 'include',
+      });
+
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(
+          error.message || 'Impossibile eliminare: quotazione già inviata'
+        );
+      }
+    },
+    onSuccess: (_, id) => {
+      queryClient.removeQueries({ queryKey: quotationKeys.detail(id) });
+      queryClient.invalidateQueries({ queryKey: quotationKeys.lists() });
+    },
+  });
+}
+
+/**
+ * Invia quotazione a Salesforce
+ * IMPORTANTE: Dopo questa chiamata, la quotazione diventa READ-ONLY
+ */
+export function useSubmitQuotation(id: string) {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async (): Promise<SubmitResponse> => {
+      const response = await fetch(`/api/custom/quotations/${id}/submit`, {
+        method: 'POST',
+        credentials: 'include',
+      });
+
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.message || 'Errore invio quotazione');
+      }
+
+      return response.json();
+    },
+    onSuccess: () => {
+      // Invalida tutto per forzare refresh con nuovo status
+      queryClient.invalidateQueries({ queryKey: quotationKeys.all });
+    },
+  });
+}
+```
+
+### Components
+
+#### QuotationForm
+
+```tsx
+// features/custom-configurator/components/QuotationForm.tsx
+
+import { useForm } from '@tanstack/react-form';
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Textarea } from '@/components/ui/textarea';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
+import { Checkbox } from '@/components/ui/checkbox';
+import { Separator } from '@/components/ui/separator';
+import type { QuotationFormData, CalculationResult } from '../types';
+
+interface QuotationFormProps {
+  /** Dati configurazione dal wizard (read-only) */
+  configurationData: CalculationResult;
+  /** Submit handler */
+  onSubmit: (data: QuotationFormData) => void;
+  /** Loading state */
+  isSubmitting?: boolean;
+  /** Valori iniziali (per edit DRAFT) */
+  initialValues?: Partial<QuotationFormData>;
+}
+
+export function QuotationForm({
+  configurationData,
+  onSubmit,
+  isSubmitting,
+  initialValues,
+}: QuotationFormProps) {
+  const form = useForm<QuotationFormData>({
+    defaultValues: {
+      projectName: initialValues?.projectName ?? '',
+      customerBudgetCents: initialValues?.customerBudgetCents,
+      installationCity: initialValues?.installationCity ?? '',
+      requestedDeliveryDate: initialValues?.requestedDeliveryDate,
+      internetConnection: initialValues?.internetConnection,
+      contentType: initialValues?.contentType,
+      contentManagement: initialValues?.contentManagement,
+      anchoringSystem: initialValues?.anchoringSystem,
+      anchoringMaterial: initialValues?.anchoringMaterial,
+      customerCategory: initialValues?.customerCategory,
+      hasExistingSoftware: initialValues?.hasExistingSoftware ?? false,
+      needsVideorender: initialValues?.needsVideorender ?? false,
+      productsDescription: initialValues?.productsDescription ?? '',
+      commercialNotes: initialValues?.commercialNotes ?? '',
+      needsSiteSurvey: initialValues?.needsSiteSurvey ?? false,
+      // Configurazione tecnica (read-only, da configurationData)
+      ...configurationData,
+    },
+    onSubmit: async ({ value }) => {
+      onSubmit(value);
+    },
+  });
+
+  return (
+    <form
+      onSubmit={(e) => {
+        e.preventDefault();
+        form.handleSubmit();
+      }}
+    >
+      {/* === SEZIONE 1: Informazioni Progetto === */}
+      <Card className="mb-6">
+        <CardHeader>
+          <CardTitle>Informazioni Progetto</CardTitle>
+          <CardDescription>
+            Dati generali del progetto e dell'installazione
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <form.Field name="projectName">
+            {(field) => (
+              <div className="space-y-2">
+                <Label htmlFor={field.name}>Nome Progetto *</Label>
+                <Input
+                  id={field.name}
+                  value={field.state.value}
+                  onChange={(e) => field.handleChange(e.target.value)}
+                  placeholder="es. Evento Fiera Milano 2026"
+                />
+              </div>
+            )}
+          </form.Field>
+
+          <div className="grid grid-cols-2 gap-4">
+            <form.Field name="customerBudgetCents">
+              {(field) => (
+                <div className="space-y-2">
+                  <Label htmlFor={field.name}>Budget Cliente (€)</Label>
+                  <Input
+                    id={field.name}
+                    type="number"
+                    value={field.state.value ? field.state.value / 100 : ''}
+                    onChange={(e) =>
+                      field.handleChange(
+                        e.target.value ? Number(e.target.value) * 100 : undefined
+                      )
+                    }
+                    placeholder="es. 15000"
+                  />
+                </div>
+              )}
+            </form.Field>
+
+            <form.Field name="installationCity">
+              {(field) => (
+                <div className="space-y-2">
+                  <Label htmlFor={field.name}>Città Installazione</Label>
+                  <Input
+                    id={field.name}
+                    value={field.state.value}
+                    onChange={(e) => field.handleChange(e.target.value)}
+                    placeholder="es. Milano"
+                  />
+                </div>
+              )}
+            </form.Field>
+          </div>
+
+          <form.Field name="requestedDeliveryDate">
+            {(field) => (
+              <div className="space-y-2">
+                <Label htmlFor={field.name}>Data Consegna Richiesta</Label>
+                <Input
+                  id={field.name}
+                  type="date"
+                  value={field.state.value ?? ''}
+                  onChange={(e) => field.handleChange(e.target.value)}
+                />
+              </div>
+            )}
+          </form.Field>
+        </CardContent>
+      </Card>
+
+      {/* === SEZIONE 2: Dettagli Installazione === */}
+      <Card className="mb-6">
+        <CardHeader>
+          <CardTitle>Dettagli Installazione</CardTitle>
+          <CardDescription>
+            Caratteristiche tecniche dell'installazione
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="grid grid-cols-2 gap-4">
+            <form.Field name="internetConnection">
+              {(field) => (
+                <div className="space-y-2">
+                  <Label>Connessione Internet</Label>
+                  <Select
+                    value={field.state.value}
+                    onValueChange={field.handleChange}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Seleziona..." />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="PRESENTE_CABLATA">
+                        Presente (cablata)
+                      </SelectItem>
+                      <SelectItem value="PRESENTE_WIFI">
+                        Presente (WiFi)
+                      </SelectItem>
+                      <SelectItem value="DA_PREDISPORRE">
+                        Da predisporre
+                      </SelectItem>
+                      <SelectItem value="NON_NECESSARIA">
+                        Non necessaria
+                      </SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              )}
+            </form.Field>
+
+            <form.Field name="contentType">
+              {(field) => (
+                <div className="space-y-2">
+                  <Label>Tipo Contenuto</Label>
+                  <Select
+                    value={field.state.value}
+                    onValueChange={field.handleChange}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Seleziona..." />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="VIDEO">Video</SelectItem>
+                      <SelectItem value="IMMAGINI_STATICHE">
+                        Immagini statiche
+                      </SelectItem>
+                      <SelectItem value="MIXED">Misto</SelectItem>
+                      <SelectItem value="LIVE_STREAMING">
+                        Live streaming
+                      </SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              )}
+            </form.Field>
+          </div>
+
+          <div className="grid grid-cols-2 gap-4">
+            <form.Field name="anchoringSystem">
+              {(field) => (
+                <div className="space-y-2">
+                  <Label>Sistema Ancoraggio</Label>
+                  <Select
+                    value={field.state.value}
+                    onValueChange={field.handleChange}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Seleziona..." />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="GROUND_SUPPORT">
+                        Ground support
+                      </SelectItem>
+                      <SelectItem value="AMERICANA">Americana</SelectItem>
+                      <SelectItem value="APPENDIMENTO">Appendimento</SelectItem>
+                      <SelectItem value="STRUTTURA_FISSA">
+                        Struttura fissa
+                      </SelectItem>
+                      <SelectItem value="DA_DEFINIRE">Da definire</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              )}
+            </form.Field>
+
+            <form.Field name="anchoringMaterial">
+              {(field) => (
+                <div className="space-y-2">
+                  <Label>Materiale Ancoraggio</Label>
+                  <Select
+                    value={field.state.value}
+                    onValueChange={field.handleChange}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Seleziona..." />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="INCLUSO">Incluso</SelectItem>
+                      <SelectItem value="FORNITO_DAL_CLIENTE">
+                        Fornito dal cliente
+                      </SelectItem>
+                      <SelectItem value="DA_QUOTARE_SEPARATAMENTE">
+                        Da quotare separatamente
+                      </SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              )}
+            </form.Field>
+          </div>
+
+          <form.Field name="contentManagement">
+            {(field) => (
+              <div className="space-y-2">
+                <Label>Gestione Contenuti</Label>
+                <Select
+                  value={field.state.value}
+                  onValueChange={field.handleChange}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Seleziona..." />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="LOCALE">Locale</SelectItem>
+                    <SelectItem value="REMOTO">Remoto</SelectItem>
+                    <SelectItem value="CLOUD">Cloud</SelectItem>
+                    <SelectItem value="NON_DEFINITO">Non definito</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
+          </form.Field>
+        </CardContent>
+      </Card>
+
+      {/* === SEZIONE 3: Info Cliente === */}
+      <Card className="mb-6">
+        <CardHeader>
+          <CardTitle>Informazioni Cliente</CardTitle>
+          <CardDescription>Caratteristiche e necessità del cliente</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <form.Field name="customerCategory">
+            {(field) => (
+              <div className="space-y-2">
+                <Label>Categoria Cliente</Label>
+                <Select
+                  value={field.state.value}
+                  onValueChange={field.handleChange}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Seleziona..." />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="RENTAL">Rental</SelectItem>
+                    <SelectItem value="CORPORATE">Corporate</SelectItem>
+                    <SelectItem value="RETAIL">Retail</SelectItem>
+                    <SelectItem value="EVENTI">Eventi</SelectItem>
+                    <SelectItem value="BROADCAST">Broadcast</SelectItem>
+                    <SelectItem value="ALTRO">Altro</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
+          </form.Field>
+
+          <div className="flex items-center space-x-6">
+            <form.Field name="hasExistingSoftware">
+              {(field) => (
+                <div className="flex items-center space-x-2">
+                  <Checkbox
+                    id={field.name}
+                    checked={field.state.value}
+                    onCheckedChange={field.handleChange}
+                  />
+                  <Label htmlFor={field.name}>Ha già software di gestione</Label>
+                </div>
+              )}
+            </form.Field>
+
+            <form.Field name="needsVideorender">
+              {(field) => (
+                <div className="flex items-center space-x-2">
+                  <Checkbox
+                    id={field.name}
+                    checked={field.state.value}
+                    onCheckedChange={field.handleChange}
+                  />
+                  <Label htmlFor={field.name}>Necessita videorender</Label>
+                </div>
+              )}
+            </form.Field>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* === SEZIONE 4: Note === */}
+      <Card className="mb-6">
+        <CardHeader>
+          <CardTitle>Note e Richieste</CardTitle>
+          <CardDescription>
+            Informazioni aggiuntive per il team tecnico
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <form.Field name="productsDescription">
+            {(field) => (
+              <div className="space-y-2">
+                <Label htmlFor={field.name}>Descrizione Prodotti Richiesti</Label>
+                <Textarea
+                  id={field.name}
+                  value={field.state.value}
+                  onChange={(e) => field.handleChange(e.target.value)}
+                  placeholder="Descrivi i prodotti e le specifiche richieste..."
+                  rows={4}
+                />
+              </div>
+            )}
+          </form.Field>
+
+          <form.Field name="commercialNotes">
+            {(field) => (
+              <div className="space-y-2">
+                <Label htmlFor={field.name}>Note Commerciali</Label>
+                <Textarea
+                  id={field.name}
+                  value={field.state.value}
+                  onChange={(e) => field.handleChange(e.target.value)}
+                  placeholder="Note per il team commerciale..."
+                  rows={3}
+                />
+              </div>
+            )}
+          </form.Field>
+
+          <form.Field name="needsSiteSurvey">
+            {(field) => (
+              <div className="flex items-center space-x-2">
+                <Checkbox
+                  id={field.name}
+                  checked={field.state.value}
+                  onCheckedChange={field.handleChange}
+                />
+                <Label htmlFor={field.name}>
+                  Richiede sopralluogo in loco
+                </Label>
+              </div>
+            )}
+          </form.Field>
+        </CardContent>
+      </Card>
+
+      {/* === SEZIONE 5: Riepilogo Configurazione (Read-Only) === */}
+      <Card className="mb-6 bg-muted/50">
+        <CardHeader>
+          <CardTitle>Configurazione Tecnica</CardTitle>
+          <CardDescription>
+            Riepilogo della configurazione dal wizard (non modificabile)
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+            <div>
+              <span className="text-muted-foreground">Dimensioni:</span>
+              <p className="font-medium">
+                {configurationData.actualWidthMm} x{' '}
+                {configurationData.actualHeightMm} mm
+              </p>
+            </div>
+            <div>
+              <span className="text-muted-foreground">Moduli:</span>
+              <p className="font-medium">
+                {configurationData.totalModules} ({configurationData.modulesX} x{' '}
+                {configurationData.modulesY})
+              </p>
+            </div>
+            <div>
+              <span className="text-muted-foreground">Risoluzione:</span>
+              <p className="font-medium">
+                {configurationData.resolutionX} x {configurationData.resolutionY}{' '}
+                px
+              </p>
+            </div>
+            <div>
+              <span className="text-muted-foreground">Pitch:</span>
+              <p className="font-medium">
+                P{(configurationData.pixelPitchTenths / 10).toFixed(1)}
+              </p>
+            </div>
+            <div>
+              <span className="text-muted-foreground">Receiving Cards:</span>
+              <p className="font-medium">{configurationData.receivingCards}</p>
+            </div>
+            <div>
+              <span className="text-muted-foreground">Prezzo Stimato:</span>
+              <p className="font-medium">
+                €{' '}
+                {(configurationData.estimatedPriceInCents / 100).toLocaleString(
+                  'it-IT'
+                )}
+              </p>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      <Separator className="my-6" />
+
+      <div className="flex justify-end">
+        <Button type="submit" size="lg" disabled={isSubmitting}>
+          {isSubmitting ? 'Invio in corso...' : 'Invia Richiesta Preventivo'}
+        </Button>
+      </div>
+    </form>
+  );
+}
+```
+
+#### QuotationView
+
+```tsx
+// features/custom-configurator/components/QuotationView.tsx
+
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from '@/components/ui/card';
+import { Badge } from '@/components/ui/badge';
+import { Separator } from '@/components/ui/separator';
+import { Alert, AlertDescription } from '@/components/ui/alert';
+import { InfoIcon } from 'lucide-react';
+import type { Quotation } from '../types/quotation';
+import { QuotationStatusBadge } from './QuotationStatusBadge';
+import { QuotationPhaseBadge } from './QuotationPhaseBadge';
+
+interface QuotationViewProps {
+  quotation: Quotation;
+}
+
+/**
+ * Visualizzazione READ-ONLY di una quotazione inviata a SF
+ */
+export function QuotationView({ quotation }: QuotationViewProps) {
+  return (
+    <div className="space-y-6">
+      {/* Header con status */}
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-2xl font-bold">{quotation.projectName}</h1>
+          {quotation.salesforceQuoteNumber && (
+            <p className="text-muted-foreground">
+              Numero: {quotation.salesforceQuoteNumber}
+            </p>
+          )}
+        </div>
+        <div className="flex gap-2">
+          <QuotationStatusBadge status={quotation.status} />
+          {quotation.phase && <QuotationPhaseBadge phase={quotation.phase} />}
+        </div>
+      </div>
+
+      {/* Alert read-only */}
+      <Alert>
+        <InfoIcon className="h-4 w-4" />
+        <AlertDescription>
+          Questa quotazione è stata inviata al team Ytec e non può essere
+          modificata. Riceverai aggiornamenti via email quando lo stato cambia.
+        </AlertDescription>
+      </Alert>
+
+      {/* Pricing da SF (se disponibile) */}
+      {quotation.totalCostCents && (
+        <Card className="border-primary">
+          <CardHeader>
+            <CardTitle>Preventivo</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <p className="text-3xl font-bold">
+              € {(quotation.totalCostCents / 100).toLocaleString('it-IT')}
+            </p>
+            <p className="text-sm text-muted-foreground">
+              Prezzo definitivo calcolato dal team
+            </p>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Note team (se presenti) */}
+      {quotation.ytecNotes && (
+        <Card>
+          <CardHeader>
+            <CardTitle>Note dal Team</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <p className="whitespace-pre-wrap">{quotation.ytecNotes}</p>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Dettagli quotazione */}
+      <Card>
+        <CardHeader>
+          <CardTitle>Dettagli Richiesta</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          {/* ... campi read-only come in QuotationForm ... */}
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+```
+
+#### QuotationStatusBadge
+
+```tsx
+// features/custom-configurator/components/QuotationStatusBadge.tsx
+
+import { Badge } from '@/components/ui/badge';
+import type { QuotationStatus } from '../types/quotation';
+
+const statusConfig: Record<
+  QuotationStatus,
+  { label: string; variant: 'default' | 'secondary' | 'outline' }
+> = {
+  DRAFT: { label: 'Bozza', variant: 'outline' },
+  SUBMITTED: { label: 'Inviata', variant: 'default' },
+};
+
+interface QuotationStatusBadgeProps {
+  status: QuotationStatus;
+}
+
+export function QuotationStatusBadge({ status }: QuotationStatusBadgeProps) {
+  const config = statusConfig[status];
+  return <Badge variant={config.variant}>{config.label}</Badge>;
+}
+```
+
+#### QuotationPhaseBadge
+
+```tsx
+// features/custom-configurator/components/QuotationPhaseBadge.tsx
+
+import { Badge } from '@/components/ui/badge';
+import type { QuotationPhase } from '../types/quotation';
+
+const phaseConfig: Record<
+  QuotationPhase,
+  { label: string; variant: 'default' | 'secondary' | 'destructive' | 'outline' }
+> = {
+  RICEVUTA: { label: 'Ricevuta', variant: 'secondary' },
+  IN_LAVORAZIONE: { label: 'In Lavorazione', variant: 'default' },
+  INVIATA_AL_CLIENTE: { label: 'Preventivo Pronto', variant: 'default' },
+  ACCETTATA: { label: 'Accettata', variant: 'default' },
+  PERSA: { label: 'Persa', variant: 'destructive' },
+};
+
+interface QuotationPhaseBadgeProps {
+  phase: QuotationPhase;
+}
+
+export function QuotationPhaseBadge({ phase }: QuotationPhaseBadgeProps) {
+  const config = phaseConfig[phase];
+  return <Badge variant={config.variant}>{config.label}</Badge>;
+}
+```
+
+#### QuotationList
+
+```tsx
+// features/custom-configurator/components/QuotationList.tsx
+
+import { Link } from '@tanstack/react-router';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table';
+import { Button } from '@/components/ui/button';
+import { Eye, Trash2, Pencil } from 'lucide-react';
+import type { Quotation } from '../types/quotation';
+import { isQuotationEditable } from '../types/quotation';
+import { QuotationStatusBadge } from './QuotationStatusBadge';
+import { QuotationPhaseBadge } from './QuotationPhaseBadge';
+
+interface QuotationListProps {
+  quotations: Quotation[];
+  onDelete?: (id: string) => void;
+}
+
+export function QuotationList({ quotations, onDelete }: QuotationListProps) {
+  return (
+    <Table>
+      <TableHeader>
+        <TableRow>
+          <TableHead>Numero</TableHead>
+          <TableHead>Progetto</TableHead>
+          <TableHead>Status</TableHead>
+          <TableHead>Fase</TableHead>
+          <TableHead>Data</TableHead>
+          <TableHead className="text-right">Azioni</TableHead>
+        </TableRow>
+      </TableHeader>
+      <TableBody>
+        {quotations.map((q) => (
+          <TableRow key={q.id}>
+            <TableCell className="font-mono">
+              {q.salesforceQuoteNumber ?? '-'}
+            </TableCell>
+            <TableCell>{q.projectName}</TableCell>
+            <TableCell>
+              <QuotationStatusBadge status={q.status} />
+            </TableCell>
+            <TableCell>
+              {q.phase ? <QuotationPhaseBadge phase={q.phase} /> : '-'}
+            </TableCell>
+            <TableCell>
+              {new Date(q.createdAt).toLocaleDateString('it-IT')}
+            </TableCell>
+            <TableCell className="text-right">
+              <div className="flex justify-end gap-2">
+                <Button variant="ghost" size="icon" asChild>
+                  <Link to="/quotations/$id" params={{ id: q.id }}>
+                    <Eye className="h-4 w-4" />
+                  </Link>
+                </Button>
+
+                {isQuotationEditable(q) && (
+                  <>
+                    <Button variant="ghost" size="icon" asChild>
+                      <Link to="/quotations/$id/edit" params={{ id: q.id }}>
+                        <Pencil className="h-4 w-4" />
+                      </Link>
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      onClick={() => onDelete?.(q.id)}
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
+                  </>
+                )}
+              </div>
+            </TableCell>
+          </TableRow>
+        ))}
+      </TableBody>
+    </Table>
+  );
+}
+```
+
+### Integrazione con ConfigWizard
+
+```tsx
+// Nel wizard, dopo step finale
+import { useCreateQuotation, useSubmitQuotation } from '../api';
+import { QuotationForm } from './QuotationForm';
+
+function ConfigWizardQuotationStep({ configData }) {
+  const createMutation = useCreateQuotation();
+  const [quotationId, setQuotationId] = useState<string | null>(null);
+  const submitMutation = useSubmitQuotation(quotationId ?? '');
+
+  const handleCreateAndSubmit = async (formData: QuotationFormData) => {
+    // 1. Crea quotazione DRAFT
+    const quotation = await createMutation.mutateAsync(formData);
+    setQuotationId(quotation.id);
+
+    // 2. Conferma utente
+    const confirmed = await showConfirmDialog(
+      'Confermi invio?',
+      'Una volta inviata, non potrai più modificare la richiesta.'
+    );
+
+    if (confirmed) {
+      // 3. Invia a Salesforce
+      const result = await submitMutation.mutateAsync();
+      toast.success(`Quotazione inviata: ${result.salesforceQuoteNumber}`);
+      navigate({ to: '/quotations/$id', params: { id: quotation.id } });
+    }
+  };
+
+  return (
+    <QuotationForm
+      configurationData={configData}
+      onSubmit={handleCreateAndSubmit}
+      isSubmitting={createMutation.isPending || submitMutation.isPending}
+    />
+  );
+}
+```
+
+---
+
 ## 12. Algoritmo Configuratore (Frontend)
 
 ### features/custom-configurator/utils/calculator.ts
