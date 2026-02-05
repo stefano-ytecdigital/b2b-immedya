@@ -30,6 +30,7 @@ Prima di OGNI sessione, leggi e aggiorna questi file:
 |------|-------|-------------------|
 | `.claude/TODO.md` | Task correnti e completati | Ad ogni task iniziato/completato |
 | `.claude/SECOND-BRAIN.md` | Ragionamenti, decisioni, preferenze | Quando impari qualcosa di nuovo |
+| `.claude/TASK_*.md` | Dossier task complesse multi-sessione | Quando inizi/aggiorni task multi-sessione |
 
 ### Workflow Memoria
 
@@ -37,15 +38,18 @@ Prima di OGNI sessione, leggi e aggiorna questi file:
 1. INIZIO SESSIONE
    ├── Leggi CLAUDE.md (questo file)
    ├── Leggi .claude/TODO.md (cosa c'è da fare?)
-   └── Leggi .claude/SECOND-BRAIN.md (contesto e decisioni passate)
+   ├── Leggi .claude/SECOND-BRAIN.md (contesto e decisioni passate)
+   └── Leggi eventuali .claude/TASK_*.md attivi
 
 2. DURANTE IL LAVORO
    ├── Aggiorna TODO.md quando inizi/completi task
-   └── Annota in SECOND-BRAIN.md decisioni importanti
+   ├── Annota in SECOND-BRAIN.md decisioni importanti
+   └── Aggiorna TASK_X.md se stai lavorando su task multi-sessione
 
 3. FINE SESSIONE
    ├── Aggiorna TODO.md con stato finale
-   └── Scrivi in SECOND-BRAIN.md cosa hai imparato
+   ├── Scrivi in SECOND-BRAIN.md cosa hai imparato
+   └── Aggiorna sezione "Sessioni di Lavoro" nel TASK_X.md attivo
 ```
 
 ---
@@ -67,6 +71,8 @@ B2B - Cocca/
 ├── .claude/
 │   ├── TODO.md                  # Task list operativa
 │   ├── SECOND-BRAIN.md          # Memoria persistente
+│   ├── TASK_TEMPLATE.md         # Template per nuovi TASK
+│   ├── TASK_*.md                # Dossier task complesse (multi-sessione)
 │   ├── agents/                  # Sottoagenti specializzati
 │   └── skills/                  # Skill disponibili
 │
@@ -84,6 +90,7 @@ B2B - Cocca/
 | Vedere requisiti business | `Documentazione B2B.md` |
 | Sapere cosa ho fatto prima | `.claude/SECOND-BRAIN.md` |
 | Sapere cosa devo fare | `.claude/TODO.md` |
+| Dettagli task multi-sessione | `.claude/TASK_*.md` |
 
 ---
 
@@ -268,19 +275,103 @@ Quale preferisci, o hai altre idee?
 
 ---
 
+## Gestione TASK_X.md
+
+### Differenza tra TODO.md e TASK_X.md
+
+| Aspetto | TODO.md | TASK_X.md |
+|---------|---------|-----------|
+| **Scopo** | Lista operativa veloce | Dossier completo per task complessa |
+| **Durata** | Singola sessione | Multi-sessione |
+| **Contenuto** | Checkbox, stato breve | Planning, contesto, progressi, storico |
+| **Quantità** | 1 file unico | 1 file per task |
+| **Lifecycle** | Aggiorna in-place | Rinomina a `_DONE.md` quando completato |
+
+### Naming Convention
+
+- **Formato**: `TASK_XXX_[slug].md` dove XXX è numero progressivo a 3 cifre
+- **Esempi**:
+  - `TASK_001_auth-google-oauth.md`
+  - `TASK_002_configurator-algorithm.md`
+- **Completati**: `TASK_001_auth-google-oauth_DONE.md`
+
+### Quando Creare un TASK_X.md
+
+Creare un file TASK_X.md quando:
+1. La task richiede **più di una sessione** Claude
+2. Tocca **più di uno slice**
+3. Richiede **decisioni architetturali**
+4. L'utente lo richiede esplicitamente
+
+**NON creare TASK_X.md** per:
+- Bug fix semplici
+- Task completabili in una sessione
+- Modifiche minori
+
+### Workflow TASK
+
+#### Inizio Task
+
+```
+1. Crea file TASK_XXX_[slug].md copiando da TASK_TEMPLATE.md
+2. Compila sezioni: Obiettivo, Contesto, Piano di Implementazione
+3. Aggiungi riferimento in TODO.md nella sezione "In Corso":
+   - [ ] [TIMESTAMP] TASK_XXX: [nome] → vedi .claude/TASK_XXX_[slug].md
+```
+
+#### Durante il Lavoro
+
+```
+1. Aggiorna sezione "Sessioni di Lavoro" ad ogni sessione
+2. Spunta checkbox nel Piano di Implementazione
+3. Documenta decisioni nella tabella "Decisioni Prese"
+4. Aggiorna stato (🟡 In Corso / 🔴 Bloccato) se cambia
+```
+
+#### Completamento Task
+
+```
+1. Aggiorna stato a 🟢 Completato
+2. Compila sezione "Completamento" (data, lessons learned)
+3. Rinomina file: TASK_XXX_[slug].md → TASK_XXX_[slug]_DONE.md
+4. Aggiorna TODO.md (sposta a Completati con riferimento)
+5. Trasferisci lessons learned in SECOND-BRAIN.md
+```
+
+### Struttura TASK_X.md
+
+Il template si trova in `.claude/TASK_TEMPLATE.md`. Le sezioni principali sono:
+
+| Sezione | Scopo |
+|---------|-------|
+| Header | Stato, data, slice, priorità |
+| Obiettivo | Cosa deve essere realizzato |
+| Contesto | Background e motivazioni |
+| Piano di Implementazione | Fasi e step con checkbox |
+| Decisioni Prese | Tabella delle decisioni |
+| Sessioni di Lavoro | Log di ogni sessione |
+| Blocchi e Dipendenze | Problemi e risoluzione |
+| Note Tecniche | Appunti e snippet |
+| Completamento | Wrap-up finale |
+
+---
+
 ## Workflow Standard
 
 ### Inizio Nuova Feature
 
 ```
 1. Leggi TODO.md e SECOND-BRAIN.md
-2. Identifica lo slice coinvolto
-3. Consulta docs/ relativa (BACKEND.md o FRONTEND.md)
-4. Proponi approccio all'utente
-5. [Se approvato] Aggiorna TODO.md con task
-6. Implementa
-7. Aggiorna TODO.md (completato)
-8. Documenta in SECOND-BRAIN.md se necessario
+2. Valuta complessità: è multi-sessione? Tocca più slice?
+   → SÌ: Crea TASK_X.md (vedi sezione dedicata)
+   → NO: Procedi con TODO.md
+3. Identifica lo slice coinvolto
+4. Consulta docs/ relativa (BACKEND.md o FRONTEND.md)
+5. Proponi approccio all'utente
+6. [Se approvato] Aggiorna TODO.md (e TASK_X.md se creato)
+7. Implementa
+8. Aggiorna TODO.md (completato) e TASK_X.md se presente
+9. Documenta in SECOND-BRAIN.md se necessario
 ```
 
 ### Risoluzione Bug
@@ -335,6 +426,7 @@ CHECKLIST INIZIO SESSIONE:
 □ Ho letto CLAUDE.md? (questo file)
 □ Ho letto .claude/TODO.md?
 □ Ho letto .claude/SECOND-BRAIN.md?
+□ Ho letto eventuali .claude/TASK_*.md attivi?
 □ So su quale slice devo lavorare?
 □ Ho consultato la documentazione relativa?
 ```
