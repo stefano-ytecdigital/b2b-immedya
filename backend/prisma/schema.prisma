@@ -1,0 +1,289 @@
+// B2B LEDWall Platform - Prisma Schema
+// Generated: 2026-02-06
+// Fase 1 MVP: Auth + Catalog + StandardConfigurator
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ============================================================================
+// ENUMS (Mapped from Salesforce Picklists)
+// ============================================================================
+
+// Fase__c (Quotation Phase)
+enum QuotationPhase {
+  DRAFT              // "Bozza"
+  SUBMITTED          // "Inviato a YTEC"
+  READY              // "Preventivo Pronto"
+  CLOSED             // "Chiuso"
+}
+
+// Connessione_Internet__c
+enum InternetConnection {
+  WIRED              // "via Cavo"
+  WIFI               // "via Wi-Fi (almeno 4 su 5 di segnale)"
+  LTE_4G             // "Router 4G LTE"
+}
+
+// Tipologia_di_Contenuti__c
+enum ContentType {
+  ADVERTISING        // "Pubblicitari/ADS"
+  TV_EXTERNAL        // "TV o Sorgente Esterna"
+  INTERACTIVE        // "Interattivi (solo per Totem Touch)"
+}
+
+// Gestione_Contenuti__c
+enum ContentManagement {
+  BY_CUSTOMER        // "direttamente dal cliente"
+  BY_AGENCY          // "da agenzia incaricata dal cliente"
+  BY_IMMEDYA         // "da Immedya (valutazione pacchetto)"
+}
+
+// Sistema_Ancoraggio__c
+enum AnchoringSystem {
+  WALL               // "A Muro"
+  FLOOR              // "A Pavimento"
+  CEILING            // "A Soffitto"
+  FREESTANDING       // "Autoportante"
+  OTHER              // "Altro (specificare nelle note)"
+}
+
+// Materiale_Sito_Installazione__c
+enum AnchoringMaterial {
+  DRYWALL            // "Cartongesso"
+  CONCRETE           // "Muro di Cemento Armato"
+  WOOD               // "Legno/Compensato"
+  GLASS_METAL        // "Vetro/Lamiera"
+  FREESTANDING       // "Autoportante"
+  OTHER              // "Altro (specificare in Note)"
+}
+
+enum CustomerCategory {
+  B2B
+  B2C
+  PUBLIC_SECTOR
+}
+
+enum UserRole {
+  PARTNER            // Partner B2B (from SF)
+  ADMIN              // Admin (Google OAuth)
+}
+
+enum ProductType {
+  STANDARD           // Kit pre-configurati
+  CUSTOM             // Configurazione custom
+}
+
+// ============================================================================
+// MODELS
+// ============================================================================
+
+model User {
+  id        String   @id @default(cuid())
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Authentication
+  email        String   @unique
+  passwordHash String?  // NULL for Google OAuth users
+  role         UserRole @default(PARTNER)
+  isActive     Boolean  @default(true)
+
+  // Partner B2B specific (synced from Salesforce)
+  salesforceAccountId String? @unique // Partner__c (lookup to Account)
+  orderEmail          String? // EmailOrdine__c
+  billingEmail        String? // EmailAmm__c
+
+  // Profile
+  firstName String?
+  lastName  String?
+  company   String?
+
+  // Relations
+  refreshTokens RefreshToken[]
+  quotations    Quotation[]
+
+  // Indexes
+  @@index([email])
+  @@index([salesforceAccountId])
+  @@map("users")
+}
+
+model RefreshToken {
+  id        String   @id @default(cuid())
+  createdAt DateTime @default(now())
+  expiresAt DateTime
+
+  token  String @unique
+  userId String
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([token])
+  @@map("refresh_tokens")
+}
+
+model Product {
+  id        String   @id @default(cuid())
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  name               String
+  type               ProductType
+  outdoorCompatible  Boolean     @default(false)
+  description        String?
+  technicalSheetUrl  String?
+  imageUrl           String?
+
+  // Relations
+  modules Module[]
+  kits    Kit[]
+
+  @@index([type])
+  @@map("products")
+}
+
+model Module {
+  id        String   @id @default(cuid())
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  name      String
+  productId String
+
+  // Dimensions (mm)
+  widthMm  Int
+  heightMm Int
+
+  // Display specs
+  pixelPitch       Float // mm (e.g., 2.5)
+  resolutionWidth  Int
+  resolutionHeight Int
+
+  // Technical
+  powerConsumptionW Int
+  weightKg          Float
+  maxPixelsPerCard  Int?
+
+  // Pricing
+  unitPriceCents Int
+
+  // Relations
+  product Product      @relation(fields: [productId], references: [id], onDelete: Cascade)
+  kits    KitModule[]
+
+  @@index([productId])
+  @@index([pixelPitch])
+  @@map("modules")
+}
+
+model Kit {
+  id        String   @id @default(cuid())
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  name        String
+  productId   String
+  description String?
+  imageUrl    String?
+
+  // Derived specs (calculated from modules)
+  totalWidthMm     Int
+  totalHeightMm    Int
+  totalResolutionW Int
+  totalResolutionH Int
+  pixelPitch       Float
+
+  // Pricing
+  totalPriceCents Int
+
+  // Relations
+  product    Product     @relation(fields: [productId], references: [id], onDelete: Cascade)
+  modules    KitModule[]
+  quotations Quotation[]
+
+  @@index([productId])
+  @@index([pixelPitch])
+  @@map("kits")
+}
+
+// Junction table: Kit <-> Module (many-to-many with quantity)
+model KitModule {
+  id       String @id @default(cuid())
+  kitId    String
+  moduleId String
+  quantity Int    @default(1)
+
+  kit    Kit    @relation(fields: [kitId], references: [id], onDelete: Cascade)
+  module Module @relation(fields: [moduleId], references: [id], onDelete: Cascade)
+
+  @@unique([kitId, moduleId])
+  @@index([kitId])
+  @@index([moduleId])
+  @@map("kit_modules")
+}
+
+model Quotation {
+  id        String   @id @default(cuid())
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  userId String
+  kitId  String? // NULL for custom configurations
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  kit  Kit? @relation(fields: [kitId], references: [id], onDelete: SetNull)
+
+  // Salesforce sync
+  salesforceQuoteId     String?           @unique
+  salesforceQuoteNumber String?
+  phase                 QuotationPhase    @default(DRAFT)
+  lastSyncAt            DateTime?
+
+  // Project info
+  projectName           String
+  customerBudgetCents   Int?
+  installationCity      String?
+  requestedDeliveryDate DateTime?
+
+  // Installation details
+  internetConnection  InternetConnection?
+  contentType         ContentType?
+  contentManagement   ContentManagement?
+  anchoringSystem     AnchoringSystem?
+  anchoringMaterial   AnchoringMaterial?
+
+  // Customer info
+  customerCategory     CustomerCategory?
+  hasExistingSoftware  Boolean           @default(false)
+  needsVideorender     Boolean           @default(false)
+
+  // Notes
+  productsDescription String?
+  commercialNotes     String?
+  needsSiteSurvey     Boolean @default(false)
+
+  // Technical configuration (from configurator)
+  configurationJson String? // JSON blob for custom configs
+
+  // Pricing (from Salesforce)
+  totalCostCents Int?
+
+  // YTEC internal notes (READ-ONLY for partners)
+  ytecNotes String?
+
+  // PDF
+  pdfUrl String?
+
+  @@index([userId])
+  @@index([kitId])
+  @@index([phase])
+  @@index([salesforceQuoteId])
+  @@map("quotations")
+}

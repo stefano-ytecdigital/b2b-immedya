@@ -1,0 +1,1 @@
+{"message":["contentType must be one of the following values: ADVERTISING, TV_EXTERNAL, INTERACTIVE","contentManagement must be one of the following values: BY_CUSTOMER, BY_AGENCY, BY_IMMEDYA","anchoringSystem must be one of the following values: WALL, FLOOR, CEILING, FREESTANDING, OTHER"],"error":"Bad Request","statusCode":400}

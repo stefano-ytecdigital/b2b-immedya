@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+    body {
+      font-family: Arial, sans-serif;
+      color: #333;
+      padding: 40px;
+    }
+    .header {
+      border-bottom: 3px solid #680081;
+      padding-bottom: 20px;
+      margin-bottom: 30px;
+    }
+    .header h1 {
+      color: #680081;
+      font-size: 28px;
+      margin-bottom: 10px;
+    }
+    .header .subtitle {
+      color: #666;
+      font-size: 14px;
+    }
+    .info-section {
+      margin-bottom: 30px;
+    }
+    .info-section h2 {
+      color: #680081;
+      font-size: 18px;
+      margin-bottom: 15px;
+      border-bottom: 1px solid #ddd;
+      padding-bottom: 5px;
+    }
+    .info-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+    }
+    .info-item {
+      padding: 8px 0;
+    }
+    .info-item strong {
+      color: #680081;
+      display: inline-block;
+      min-width: 150px;
+    }
+    .kit-details {
+      background-color: #f9f9f9;
+      padding: 20px;
+      border-radius: 5px;
+      margin: 20px 0;
+    }
+    .modules-table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 20px;
+    }
+    .modules-table th {
+      background-color: #680081;
+      color: white;
+      padding: 12px;
+      text-align: left;
+    }
+    .modules-table td {
+      padding: 10px 12px;
+      border-bottom: 1px solid #ddd;
+    }
+    .modules-table tr:nth-child(even) {
+      background-color: #f9f9f9;
+    }
+    .total-section {
+      margin-top: 30px;
+      text-align: right;
+    }
+    .total-section .total {
+      font-size: 24px;
+      color: #680081;
+      font-weight: bold;
+    }
+    .notes {
+      margin-top: 30px;
+      padding: 15px;
+      background-color: #fff9e6;
+      border-left: 4px solid #ffc107;
+    }
+    .footer {
+      margin-top: 50px;
+      padding-top: 20px;
+      border-top: 1px solid #ddd;
+      text-align: center;
+      font-size: 12px;
+      color: #666;
+    }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <h1>Preventivo LEDWall</h1>
+    <div class="subtitle">
+      Preventivo N. <strong>{{quoteNumber}}</strong> | Data: {{createdAt}}
+    </div>
+  </div>
+
+  <div class="info-section">
+    <h2>Informazioni Progetto</h2>
+    <div class="info-grid">
+      <div class="info-item">
+        <strong>Nome Progetto:</strong> {{projectName}}
+      </div>
+      <div class="info-item">
+        <strong>Cliente:</strong> {{customerName}}
+      </div>
+      <div class="info-item">
+        <strong>Città Installazione:</strong> {{installationCity}}
+      </div>
+      <div class="info-item">
+        <strong>Data Consegna:</strong> {{requestedDeliveryDate}}
+      </div>
+    </div>
+  </div>
+
+  <div class="info-section">
+    <h2>Configurazione LEDWall</h2>
+    <div class="kit-details">
+      <h3>{{kitName}}</h3>
+      <p>{{kitDescription}}</p>
+      <div style="margin-top: 15px;">
+        <strong>Dimensioni:</strong> {{kitWidth}}m x {{kitHeight}}m<br>
+        <strong>Risoluzione:</strong> {{kitResolution}}<br>
+        <strong>Pixel Pitch:</strong> {{kitPitch}}mm<br>
+        <strong>Quantità:</strong> {{quantity}} unità
+      </div>
+    </div>
+
+    <table class="modules-table">
+      <thead>
+        <tr>
+          <th>Modulo</th>
+          <th>Dimensioni</th>
+          <th>Quantità</th>
+          <th>Prezzo Unit.</th>
+          <th>Totale</th>
+        </tr>
+      </thead>
+      <tbody>
+        {{#modules}}
+        <tr>
+          <td>{{name}}</td>
+          <td>{{dimensions}}</td>
+          <td>{{quantity}}</td>
+          <td>{{unitPrice}}</td>
+          <td>{{totalPrice}}</td>
+        </tr>
+        {{/modules}}
+      </tbody>
+    </table>
+  </div>
+
+  {{#installationDetails}}
+  <div class="info-section">
+    <h2>Dettagli Installazione</h2>
+    <div class="info-grid">
+      <div class="info-item">
+        <strong>Connessione Internet:</strong> {{internetConnection}}
+      </div>
+      <div class="info-item">
+        <strong>Tipo Contenuti:</strong> {{contentType}}
+      </div>
+      <div class="info-item">
+        <strong>Gestione Contenuti:</strong> {{contentManagement}}
+      </div>
+      <div class="info-item">
+        <strong>Sistema Ancoraggio:</strong> {{anchoringSystem}}
+      </div>
+    </div>
+  </div>
+  {{/installationDetails}}
+
+  <div class="total-section">
+    <div style="font-size: 16px; margin-bottom: 10px;">
+      Prezzo Indicativo (esclusa IVA):
+    </div>
+    <div class="total">€ {{estimatedTotal}}</div>
+    <div style="font-size: 12px; color: #666; margin-top: 10px;">
+      Il prezzo finale verrà confermato dal nostro team commerciale
+    </div>
+  </div>
+
+  {{#notes}}
+  <div class="notes">
+    <strong>Note:</strong><br>
+    {{notes}}
+  </div>
+  {{/notes}}
+
+  <div class="footer">
+    <p><strong>Immedya S.r.l.</strong></p>
+    <p>Questo documento è un preventivo indicativo e non costituisce un'offerta vincolante.</p>
+    <p>Il preventivo finale sarà fornito dal nostro team commerciale dopo un'analisi dettagliata.</p>
+    <p>&copy; 2026 Immedya. Tutti i diritti riservati.</p>
+  </div>
+</body>
+</html>

@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      line-height: 1.6;
+      color: #333;
+      max-width: 600px;
+      margin: 0 auto;
+      padding: 20px;
+    }
+    .header {
+      background-color: #680081;
+      color: white;
+      padding: 20px;
+      text-align: center;
+      border-radius: 5px 5px 0 0;
+    }
+    .content {
+      background-color: #f9f9f9;
+      padding: 30px;
+      border: 1px solid #ddd;
+      border-radius: 0 0 5px 5px;
+    }
+    .info-box {
+      background-color: white;
+      padding: 15px;
+      margin: 15px 0;
+      border-left: 4px solid #680081;
+    }
+    .info-box strong {
+      color: #680081;
+    }
+    .button {
+      display: inline-block;
+      padding: 12px 30px;
+      background-color: #680081;
+      color: white;
+      text-decoration: none;
+      border-radius: 5px;
+      margin: 20px 0;
+    }
+    .footer {
+      text-align: center;
+      margin-top: 30px;
+      font-size: 12px;
+      color: #666;
+    }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <h1>Richiesta Preventivo Confermata</h1>
+  </div>
+
+  <div class="content">
+    <p>Gentile <strong>{{userName}}</strong>,</p>
+
+    <p>La tua richiesta di preventivo è stata registrata con successo nel nostro sistema.</p>
+
+    <div class="info-box">
+      <strong>Progetto:</strong> {{projectName}}<br>
+      <strong>Kit selezionato:</strong> {{kitName}}<br>
+      <strong>Dimensioni:</strong> {{kitSize}}<br>
+      <strong>Numero preventivo:</strong> {{quoteNumber}}<br>
+      <strong>Data richiesta:</strong> {{createdAt}}
+    </div>
+
+    <p>Il nostro team commerciale esaminerà la tua richiesta e ti contatterà entro 24-48 ore con un preventivo dettagliato.</p>
+
+    <p>Troverai il documento riepilogativo in allegato a questa email.</p>
+
+    <a href="{{dashboardUrl}}" class="button">Visualizza nel Dashboard</a>
+
+    <p>Se hai domande o necessiti di ulteriori informazioni, non esitare a contattarci.</p>
+
+    <p>Cordiali saluti,<br>
+    <strong>Il Team Immedya</strong></p>
+  </div>
+
+  <div class="footer">
+    <p>Questa è una email automatica, si prega di non rispondere direttamente.</p>
+    <p>&copy; 2026 Immedya. Tutti i diritti riservati.</p>
+  </div>
+</body>
+</html>

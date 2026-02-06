@@ -1,0 +1,54 @@
+================================================================================
+Campo: I dispositivi saranno ancorati (Sistema_Ancoraggio__c)
+Tipo: picklist
+--------------------------------------------------------------------------------
+  - A Muro
+  - A Pavimento
+  - A Soffitto
+  - Autoportante
+  - Altro (specificare nelle note)
+
+================================================================================
+Campo: Il materiale dove sarà ancorato è (Materiale_Sito_Installazione__c)
+Tipo: picklist
+--------------------------------------------------------------------------------
+  - Cartongesso
+  - Muro di Cemento Armato
+  - Legno/Compensato
+  - Vetro/Lamiera
+  - Autoportante
+  - Altro (specificare in Note)
+
+================================================================================
+Campo: I contenuti saranno gestiti (Gestione_Contenuti__c)
+Tipo: picklist
+--------------------------------------------------------------------------------
+  - direttamente dal cliente
+  - da agenzia incaricata dal cliente
+  - da Immedya (valutazione pacchetto)
+
+================================================================================
+Campo: Tipologia di Contenuti (Tipologia_di_Contenuti__c)
+Tipo: picklist
+--------------------------------------------------------------------------------
+  - Pubblicitari/ADS
+  - TV o Sorgente Esterna
+  - Interattivi (solo per Totem Touch)
+
+================================================================================
+Campo: Connessione Internet (Connessione_Internet__c)
+Tipo: picklist
+--------------------------------------------------------------------------------
+  - via Cavo
+  - via Wi-Fi (almeno 4 su 5 di segnale)
+  - Router 4G LTE
+
+================================================================================
+Campo: Fase (Fase__c)
+Tipo: picklist
+--------------------------------------------------------------------------------
+  - Bozza
+  - Inviato a YTEC
+  - Preventivo Pronto
+  - Chiuso
+
